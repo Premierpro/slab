@@ -26,18 +26,20 @@ struct KV{
 }kv;
 
 struct CACHE{
-    int size;
+    int maxn;
     int cnt;
     vector<KV> lru;
 }cac;
+
 /*
-    the structure of the slabclass which diffs from 8Byte to 1024 Byte
+    the structure of the slabclass which diffs from 8 Byte to 1024 Byte
     the size represents the size of the Class
 */
 struct SlabClass{
     int size;  //the size of the k-v
     vector<Node> slab;
     vector<KV> lru;
+    vector<KV> free_node;
 }slabclass;
 
 struct SSDCACHE{
@@ -51,10 +53,14 @@ struct SSDCACHE{
             cnt[i - 3] = 0;
             slabclass.size = pow(2, i); 
             slablist.push_back(slabclass); 
-            cac.size = 4 * 1024 / pow(2, i);
+            cac.maxn = 4 * 1024 / pow(2, i);
             cac.cnt = 0;
             cache.push_back(cac);
         }
+    }
+
+    int countsize(int size){
+        return log(size / 8) / log(2);
     }
 
     int findkey(int no, const string &key, int &flag){
@@ -85,6 +91,11 @@ struct SSDCACHE{
         for(int i = 0; i < number; i++){
             node.serial = i;
             slablist[no].slab.push_back(node);
+            for(int j = 0; j < mapnum; j++){
+                kv.slab_no = i;
+                kv.offset = j;
+                slablist[no].free_node.push_back(kv);
+            }
         }
         return ;
     }
@@ -95,7 +106,11 @@ struct SSDCACHE{
         if(slab_no == -1){
             if(cnt[no] == sum[no]){
                 string cachekey = slablist[no].lru[cnt[no] - 1].key;
-                putcache(cachekey, size);
+                int full = putcache(cachekey, size);
+                if(full == 1){
+                    slab_no = -2;
+                    return ;
+                }
                 kv.key = key;
                 kv.slab_no = slablist[no].lru[cnt[no] - 1].slab_no;
                 kv.offset = slablist[no].lru[cnt[no] - 1].offset;
@@ -104,12 +119,13 @@ struct SSDCACHE{
                 slablist[no].lru.pop_back();
                 slablist[no].lru.insert(slablist[no].lru.begin(), kv);
             }else{
-                slab_no = cnt[no] / single[no];
-                offset = cnt[no] % single[no];
+                slab_no = slablist[no].free_node[0].slab_no;
+                offset = slablist[no].free_node[0].offset;
                 slablist[no].slab[slab_no].bitmap.set(offset);
                 kv.key = key;
                 kv.slab_no = slab_no;
                 kv.offset = offset;
+                slablist[no].free_node.erase(slablist[no].free_node.begin());
                 slablist[no].lru.insert(slablist[no].lru.begin(), kv);
                 cnt[no]++;
             }
@@ -161,6 +177,7 @@ struct SSDCACHE{
             kv.slab_no = slablist[no].lru[itrFind].slab_no;
             kv.offset = slablist[no].lru[itrFind].offset;
             slablist[no].lru.erase(slablist[no].lru.begin() + itrFind);
+            slablist[no].free_node.push_back(kv);
             slablist[no].slab[kv.slab_no].bitmap.reset(kv.offset);
             cnt[no]--;
         }
@@ -168,7 +185,7 @@ struct SSDCACHE{
 
     int putcache(const string &key, int size){
         int no = log(size / 8) / log(2);
-        if(cache[no].cnt == cache[no].size)
+        if(cache[no].cnt == cache[no].maxn)
             return 1;
         kv.key = key;
         kv.slab_no = -1;
@@ -182,6 +199,11 @@ struct SSDCACHE{
         int no = log(size / 8) / log(2);
         cache[no].lru.erase(cache[no].lru.begin() + itrFind);
         cache[no].cnt--;
+    }
+
+    void delcachelist(int size){
+        int no = log(size / 8) / log(2);
+        cache[no].lru.clear();
     }
 
     ~SSDCACHE(){
@@ -212,8 +234,9 @@ int main()
             int c = 11;
         }
         ssdcache.put(s, 16, slab_no, offset);
+        cout << slab_no << endl;
     }
-    ssdcache.get("0", 16, slab_no, offset);
-    cout << offset << " " << endl;
+    ssdcache.get("800", 16, slab_no, offset);
+    cout << offset << " " << slab_no << endl;
     return 0;
 }
