@@ -4,211 +4,181 @@
 #include<string>
 #include<cmath>
 #include<bitset>
-#include <algorithm>
-
-#define class 8
+#include<algorithm>
 
 using namespace std;
 
-/*
-    the structure of the slab in the slabclass
-    the serial represents the location
-*/
+
+int slab_number = 0;
+
+struct Locate{
+    int size;
+    int serial;
+    int read_cnt;
+}locate;
+
 struct Node{
     int serial;
-    bitset<512> bitmap;
+    int number;
+    vector<string> keyset;
 }node;
 
-struct KV{
-    string key;
-    int slab_no;
-    int offset;
-}kv;
-
-struct CACHE{
-    int maxn;
-    int cnt;
-    vector<KV> lru;
-}cac;
-
-/*
-    the structure of the slabclass which diffs from 8 Byte to 1024 Byte
-    the size represents the size of the Class
-*/
 struct SlabClass{
-    int size;  //the size of the k-v
+    int size; 
+    int single;
+    int slab_cnt;
+    int full;
     vector<Node> slab;
-    vector<KV> lru;
-    vector<KV> free_node;
 }slabclass;
 
 struct SSDCACHE{
     vector<SlabClass> slablist;
-    int single[class];  
-    int sum[class];
-    int cnt[class];
-    vector<CACHE> cache;
-    SSDCACHE(){
+    int maxn;
+    int max_read;
+    int cnt = 0;
+    vector<Locate> slablru;
+    SSDCACHE(int maxn = 0, int max_read = 0){
+        this->maxn = maxn;
+        this->max_read = max_read;
         for(int i = 3; i <= 10; i++){
-            cnt[i - 3] = 0;
+            slabclass.slab_cnt = 0;
+            slabclass.full = 0;
             slabclass.size = pow(2, i); 
+            slabclass.single = 4 * 1024 / pow(2, i);
             slablist.push_back(slabclass); 
-            cac.maxn = 4 * 1024 / pow(2, i);
-            cac.cnt = 0;
-            cache.push_back(cac);
         }
+    }
+
+    bool addnewslab(int size){
+        if(cnt == maxn)
+            return false;
+        int no = log(size / 8) / log(2);
+        node.number = 0;
+        node.serial = ++slab_number;
+        slablist[no].slab.push_back(node);
+        slablist[no].full++;
+        locate.serial = slab_number;
+        locate.size = size;
+        slablru.insert(slablru.begin(), locate);
+        cnt++;
+        return true;
     }
 
     int countsize(int size){
         return log(size / 8) / log(2);
     }
 
-    int findkey(int no, const string &key, int &flag){
-        int sum = slablist[no].lru.size();
-        for(int i = 0; i < sum; i++){
-            if(slablist[no].lru[i].key == key){
-                return i;
-            }
-        }
-        sum = cache[no].lru.size();
-        for(int i = 0; i < sum; i++){
-            if(cache[no].lru[i].key == key){
-                flag = 1;
-                return i;
+    int findkey(int no, const string &key){
+        for(int i = 0; i < slablist[no].full; i++){
+            for(auto j : slablist[no].slab[i].keyset){
+                if(j == key)
+                    return slablist[no].slab[i].serial;
             }
         }
         return -1;
     }
 
-    /*
-        init the ssdcache by the value passed
-    */
-    void init_ssdcache(int size, int number){
-        int no = log(size / 8) / log(2);   //计算位置
-        int mapnum = 4 * 1024 / size;
-        single[no] = mapnum; 
-        sum[no] = mapnum * number;
-        for(int i = 0; i < number; i++){
-            node.serial = i;
-            slablist[no].slab.push_back(node);
-            for(int j = 0; j < mapnum; j++){
-                kv.slab_no = i;
-                kv.offset = j;
-                slablist[no].free_node.push_back(kv);
-            }
-        }
+    void halved(){
+        for(auto i : slablru)
+            i.read_cnt /= 2;
         return ;
     }
 
-    void put(const string &key, int size, int &slab_no, int &offset){
+    void put(const string &key, int size, int &full){
+        full = 0;
         int no = log(size / 8) / log(2);
-        get(key, size, slab_no, offset);
-        if(slab_no == -1){
-            if(cnt[no] == sum[no]){
-                string cachekey = slablist[no].lru[cnt[no] - 1].key;
-                int full = putcache(cachekey, size);
-                if(full == 1){
-                    slab_no = -2;
+        int seri = findkey(no, key);
+        if(seri == -1){
+            if(slablist[no].slab_cnt == slablist[no].full){
+                full = addnewslab(size);
+                if(!full){
+                    full = -1;
                     return ;
                 }
-                kv.key = key;
-                kv.slab_no = slablist[no].lru[cnt[no] - 1].slab_no;
-                kv.offset = slablist[no].lru[cnt[no] - 1].offset;
-                slab_no = kv.slab_no;
-                offset = kv.offset;
-                slablist[no].lru.pop_back();
-                slablist[no].lru.insert(slablist[no].lru.begin(), kv);
+                slablist[no].slab[slablist[no].slab_cnt].keyset.push_back(key);
+                slablist[no].slab[slablist[no].slab_cnt].number++;
+                if(slablist[no].slab[slablist[no].slab_cnt].number == slablist[no].single)
+                    slablist[no].slab_cnt++;
             }else{
-                slab_no = slablist[no].free_node[0].slab_no;
-                offset = slablist[no].free_node[0].offset;
-                slablist[no].slab[slab_no].bitmap.set(offset);
-                kv.key = key;
-                kv.slab_no = slab_no;
-                kv.offset = offset;
-                slablist[no].free_node.erase(slablist[no].free_node.begin());
-                slablist[no].lru.insert(slablist[no].lru.begin(), kv);
-                cnt[no]++;
+                int t = slablist[no].slab[slablist[no].slab_cnt].serial;
+                for(int i = 0; i < cnt; i++){
+                    if(slablru[i].serial == seri){
+                        slablru.insert(slablru.begin(), slablru[i]);
+                        slablru.erase(slablru.begin() + (i + 1));
+                    }
+                }
+                slablist[no].slab[slablist[no].slab_cnt].keyset.push_back(key);
+                slablist[no].slab[slablist[no].slab_cnt].number++;
+                if(slablist[no].slab[slablist[no].slab_cnt].number == slablist[no].single)
+                    slablist[no].slab_cnt++;
             }
         }else{
-            ;
+            for(int i = 0; i < cnt; i++){
+                if(slablru[i].serial == seri){
+                    slablru.insert(slablru.begin(), slablru[i]);
+                    slablru.erase(slablru.begin() + (i + 1));
+                }
+            }
         }
 
     }
 
-    void get(const string &key, int size, int &slab_no, int &offset){
+    vector<string> get(const string &key, int size, int &maxread, bool isput = false){
+        vector<string> vec;
+        maxread = 0;
         int no = log(size / 8) / log(2);
         int flag = 0;
-        int itrFind = findkey(no, key, flag);
+        int itrFind = findkey(no, key);
         if(itrFind == -1){
-            slab_no = -1;
-            offset = -1;
-            return ;
+            maxread = -1;
+            return vec;
         }else{
-            if(flag == 0){
-                kv.key = slablist[no].lru[itrFind].key;
-                kv.slab_no = slablist[no].lru[itrFind].slab_no;
-                kv.offset = slablist[no].lru[itrFind].offset;
-                slab_no = kv.slab_no;
-                offset = kv.offset;
-                slablist[no].lru.erase(slablist[no].lru.begin() + itrFind);
-                slablist[no].lru.insert(slablist[no].lru.begin(), kv);
-            }
-            else{
-                delcache(itrFind, size);
-                put(key, size, slab_no, offset);
+            int nums = slablru.size();
+            for(int i = 0; i < nums; i++){
+                if(slablru[i].serial == itrFind && isput == true){
+                    for(auto j : slablist[no].slab){
+                        if(slablru[i].serial == itrFind){
+                            slablru[i].read_cnt++;
+                            if(slablru[i].read_cnt == max_read){
+                                slablru[i].read_cnt = 0;
+                                vec = j.keyset;
+                            }
+                        }
+                    }
+                }
+                slablru.insert(slablru.begin(), slablru[i]);
+                slablru.erase(slablru.begin() + (i + 1));
+                break;
             }
         }
+        return vec;
     }
 
-    void del(const string &key, int size, int &slab_no, int &offset){
-        int no = log(size / 8) / log(2);
-        int flag = 0;
-        int itrFind = findkey(no, key, flag);
-        if(itrFind == -1){
-            slab_no = -1;
-            offset = -1;
-            return ;
-        }else{
-            if(flag == 1){
-                delcache(itrFind, size);
-                return ;
+    vector<string> del(int &slab_no){
+        vector<string> vec;
+        int No = slablru.size() - 1;
+        int serials = slablru[No].serial;
+        int sizes = slablru[No].size;
+        slablru.pop_back();
+        int no = log(sizes / 8) / log(2);
+        for(int i = 0; i < slablist[no].slab.size(); i++){
+            if(slablist[no].slab[i].serial == serials){
+                if(slablist[no].slab[i].number == slablist[no].single)
+                    slablist[no].slab_cnt--;
+                slab_no = serials;
+                slablist[no].full--;
+                vec = slablist[no].slab[i].keyset;
+                slablist[no].slab.erase(slablist[no].slab.begin() + i);
+                cnt--;
+                break;
             }
-            kv.key = slablist[no].lru[itrFind].key;
-            kv.slab_no = slablist[no].lru[itrFind].slab_no;
-            kv.offset = slablist[no].lru[itrFind].offset;
-            slablist[no].lru.erase(slablist[no].lru.begin() + itrFind);
-            slablist[no].free_node.push_back(kv);
-            slablist[no].slab[kv.slab_no].bitmap.reset(kv.offset);
-            cnt[no]--;
         }
-    }
-
-    int putcache(const string &key, int size){
-        int no = log(size / 8) / log(2);
-        if(cache[no].cnt == cache[no].maxn)
-            return 1;
-        kv.key = key;
-        kv.slab_no = -1;
-        kv.offset = -1;
-        cache[no].lru.insert(cache[no].lru.begin(), kv);
-        cache[no].cnt++;
-        return 0;
-    }
-
-    void delcache(int itrFind, int size){
-        int no = log(size / 8) / log(2);
-        cache[no].lru.erase(cache[no].lru.begin() + itrFind);
-        cache[no].cnt--;
-    }
-
-    void delcachelist(int size){
-        int no = log(size / 8) / log(2);
-        cache[no].lru.clear();
+        return vec;
     }
 
     ~SSDCACHE(){
         slablist.clear();
-        cache.clear();
+        slablru.clear();
     }
 };
 
@@ -216,27 +186,34 @@ struct SSDCACHE{
 //test pressure
 int main()
 {
-    SSDCACHE ssdcache;
-    ssdcache.init_ssdcache(8, 2);
-    ssdcache.init_ssdcache(16, 2);
-    ssdcache.init_ssdcache(32, 2);
-    ssdcache.init_ssdcache(64, 2);
-    ssdcache.init_ssdcache(128, 2);
-    ssdcache.init_ssdcache(256, 2);
-    ssdcache.init_ssdcache(512, 2);
-    ssdcache.init_ssdcache(1024, 2);
+    SSDCACHE ssdcache(2);
     int slab_no, offset;
-    for(int i = 0; i < 1000; i++){
+    for(int i = 0; i < 513; i++){
         string s = to_string(i);
         if(i == 512){
             int a = 999999;
             int b = 999;
             int c = 11;
         }
-        ssdcache.put(s, 16, slab_no, offset);
-        cout << slab_no << endl;
+        ssdcache.put(s, 8, slab_no);
     }
-    ssdcache.get("800", 16, slab_no, offset);
-    cout << offset << " " << slab_no << endl;
+    for(int i = 1000; i < 1256; i++){
+        string s = to_string(i);
+        if(i == 512){
+            int a = 999999;
+            int b = 999;
+            int c = 11;
+        }
+        ssdcache.put(s, 16, slab_no);
+        if(slab_no == -1){
+            vector<string> vec = ssdcache.del(slab_no);
+            for(auto j : vec)
+                cout << j << endl;
+        }
+        //cout << slab_no << endl;
+    }
+    ssdcache.get("1001", 16, slab_no, true);
+    cout << endl;
+    cout << slab_no << endl;
     return 0;
 }
